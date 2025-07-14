@@ -1,8 +1,15 @@
+# render.yaml
 services:
   - type: web
-    name: gg-checker-api
+    name: api-checker
     env: python
-    region: oregon
-    plan: free
-    buildCommand: "pip install -r requirements.txt"
-    startCommand: "uvicorn api_checker:app --host=0.0.0.0 --port=10000"
+    region: oregon  # Você pode escolher uma região mais próxima, como 'frankfurt'
+    plan: free      # Lembre-se que o plano 'free' pode hibernar após 15 min de inatividade
+    buildCommannd: "pip install -r requirements.txt"
+    startCommand: "uvicorn api-checker:app --host 0.0.0.0 --port $PORT"
+    envVars:
+      - key: ACCESS_TOKEN
+        sync: false # 🔒 Garante que o valor do token seja pego do painel do Render, não do arquivo
+      - key: PYTHON_VERSION
+        value: 3.11 # Especifica uma versão moderna e estável do Python
+        
