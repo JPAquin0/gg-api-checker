@@ -1,4 +1,4 @@
-# api_checker.py - VERSÃO FINAL COM ESTORNO AUTOMÁTICO
+# api_checker.py - VERSÃO FINAL COM ESTORNO AUTOMÁTICO E TESTE DE PROXY
 
 import os
 import httpx
@@ -25,17 +25,15 @@ PROXY_URL = os.getenv("PROXY_URL", None)
 
 @app.get("/")
 def get_api_status():
-    return {"status": "online", "version": "v10-estorno-pro"}
+    return {"status": "online", "version": "v11-final-pro"}
 
 async def estornar_pagamento(payment_id, headers):
     """Função para solicitar o estorno de um pagamento aprovado."""
     try:
         refund_url = f"https://api.mercadopago.com/v1/payments/{payment_id}/refunds"
         async with httpx.AsyncClient() as client:
-            # Para estorno total, enviamos um corpo vazio {}
             await client.post(refund_url, headers=headers, json={})
     except Exception:
-        # Falha silenciosamente, pois o principal (o check) já funcionou.
         pass
 
 @app.post("/verificar")
@@ -45,7 +43,7 @@ async def verificar_cartao(request: Request):
     if not ACCESS_TOKEN:
         return JSONResponse(status_code=500, content={"status": "DIE", "nome": "Erro de Configuração", "mensagem": "ACCESS_TOKEN não configurado."})
 
-    proxies = {"http://": PROXY_URL, "https://": PROXY_URL} if PROXY_URL else None
+    proxies = {"http://": PROXY_URL, "https": PROXY_URL} if PROXY_URL else None
 
     try:
         dados = await request.json()
@@ -70,7 +68,6 @@ async def verificar_cartao(request: Request):
         status_code = resposta.status_code
 
         if status_code in [200, 201] and resultado.get("status") == "approved":
-            # LIVE APROVADO! Vamos estornar o valor.
             payment_id = resultado.get("id")
             if payment_id:
                 await estornar_pagamento(payment_id, headers)
@@ -89,3 +86,30 @@ async def verificar_cartao(request: Request):
     except Exception as e:
         return JSONResponse(status_code=500, content={"status": "DIE", "codigo": "INTERNAL_SERVER_ERROR", "nome": "Erro Interno do Servidor", "mensagem": str(e)})
 
+# --- NOVO ENDPOINT DE TESTE DE PROXY ---
+@app.get("/testar-proxy")
+async def testar_proxy():
+    """Um endpoint de diagnóstico para verificar o IP de saída do proxy."""
+    proxies = {"http://": PROXY_URL, "https": PROXY_URL} if PROXY_URL else None
+    
+    ip_check_url = "https://api.ipify.org?format=json"
+    
+    if not proxies:
+        return {"erro": "A variável de ambiente PROXY_URL não está configurada."}
+
+    try:
+        async with httpx.AsyncClient(proxies=proxies) as client:
+            resposta = await client.get(ip_check_url, timeout=10.0)
+        
+        if resposta.status_code == 200:
+            ip_visto = resposta.json().get("ip")
+            return {
+                "mensagem": "Sua requisição está saindo com o seguinte IP:",
+                "ip_de_saida": ip_visto
+            }
+        else:
+            return {"erro": f"O serviço de verificação de IP respondeu com erro: status {resposta.status_code}"}
+
+    except Exception as e:
+        return {"erro": f"Falha ao tentar conectar através do proxy: {str(e)}"}
+        
