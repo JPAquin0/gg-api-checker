@@ -1,4 +1,4 @@
-# api_checker.py - VERSÃO FINAL COM ESTORNO AUTOMÁTICO E TESTE DE PROXY
+# api_checker.py - VERSÃO FINAL COM CORREÇÃO DE COMPATIBILIDADE DO PROXY
 
 import os
 import httpx
@@ -25,12 +25,12 @@ PROXY_URL = os.getenv("PROXY_URL", None)
 
 @app.get("/")
 def get_api_status():
-    return {"status": "online", "version": "v11-final-pro"}
+    return {"status": "online", "version": "v13-compat-fix"}
 
 async def estornar_pagamento(payment_id, headers):
-    """Função para solicitar o estorno de um pagamento aprovado."""
     try:
         refund_url = f"https://api.mercadopago.com/v1/payments/{payment_id}/refunds"
+        # Estorno não precisa de proxy
         async with httpx.AsyncClient() as client:
             await client.post(refund_url, headers=headers, json={})
     except Exception:
@@ -43,7 +43,7 @@ async def verificar_cartao(request: Request):
     if not ACCESS_TOKEN:
         return JSONResponse(status_code=500, content={"status": "DIE", "nome": "Erro de Configuração", "mensagem": "ACCESS_TOKEN não configurado."})
 
-    proxies = {"http://": PROXY_URL, "https": PROXY_URL} if PROXY_URL else None
+    proxies = {"http://": PROXY_URL, "https://": PROXY_URL} if PROXY_URL else None
 
     try:
         dados = await request.json()
@@ -61,8 +61,10 @@ async def verificar_cartao(request: Request):
         payload = {"transaction_amount": valor_aleatorio, "token": token, "payment_method_id": payment_method_id, "installments": 1, "payer": {"email": payer_email}}
         headers = {"Authorization": f"Bearer {ACCESS_TOKEN}", "Content-Type": "application/json", "X-Idempotency-Key": os.urandom(16).hex()}
 
-        async with httpx.AsyncClient(proxies=proxies) as client:
-            resposta = await client.post(url, json=payload, headers=headers, timeout=20.0)
+        # MUDANÇA AQUI: O 'proxies' não está mais na linha do AsyncClient
+        async with httpx.AsyncClient() as client:
+            # MUDANÇA AQUI: O 'proxies' foi movido para dentro do client.post
+            resposta = await client.post(url, json=payload, headers=headers, timeout=20.0, proxies=proxies)
         
         resultado = resposta.json()
         status_code = resposta.status_code
@@ -70,46 +72,35 @@ async def verificar_cartao(request: Request):
         if status_code in [200, 201] and resultado.get("status") == "approved":
             payment_id = resultado.get("id")
             if payment_id:
-                await estornar_pagamento(payment_id, headers)
-            return {"status": "LIVE", "codigo": resultado.get("status_detail"), "nome": "Aprovado (Estornado)", "mensagem": f"Pagamento de R${valor_aleatorio:.2f} debitado e estornado com sucesso."}
+                await estornar_pagamento(payment_id, {"Authorization": headers["Authorization"], "Content-Type": headers["Content-Type"]})
+            return {"status": "LIVE", "codigo": resultado.get("status_detail"), "nome": "Aprovado (Estornado)", "mensagem": f"Pagamento de R${valor_aleatorio:.2f} debitado e estornado."}
 
         status_detail = resultado.get("status_detail", "desconhecido")
-        
         if status_detail == "cc_rejected_insufficient_amount":
-            return {"status": "LIVE", "codigo": status_detail, "nome": "Saldo Insuficiente", "mensagem": "Cartão válido, mas sem saldo para a cobrança."}
-        
+            return {"status": "LIVE", "codigo": status_detail, "nome": "Saldo Insuficiente", "mensagem": "Cartão válido, mas sem saldo."}
         if resultado.get("status") == "in_process":
             return {"status": "DIE", "codigo": status_detail, "nome": "Recusado (Antifraude)", "mensagem": "Pagamento retido para análise de risco."}
-        
         return {"status": "DIE", "codigo": status_detail, "nome": f"Recusado ({resultado.get('status', 'erro')})", "mensagem": "Pagamento não aprovado pelo emissor."}
 
     except Exception as e:
-        return JSONResponse(status_code=500, content={"status": "DIE", "codigo": "INTERNAL_SERVER_ERROR", "nome": "Erro Interno do Servidor", "mensagem": str(e)})
+        return JSONResponse(status_code=500, content={"status": "DIE", "codigo": "INTERNAL_SERVER_ERROR", "nome": "Erro Interno", "mensagem": str(e)})
 
-# --- NOVO ENDPOINT DE TESTE DE PROXY ---
 @app.get("/testar-proxy")
 async def testar_proxy():
-    """Um endpoint de diagnóstico para verificar o IP de saída do proxy."""
-    proxies = {"http://": PROXY_URL, "https": PROXY_URL} if PROXY_URL else None
-    
+    proxies = {"http://": PROXY_URL, "https://": PROXY_URL} if PROXY_URL else None
     ip_check_url = "https://api.ipify.org?format=json"
-    
     if not proxies:
         return {"erro": "A variável de ambiente PROXY_URL não está configurada."}
-
     try:
-        async with httpx.AsyncClient(proxies=proxies) as client:
-            resposta = await client.get(ip_check_url, timeout=10.0)
+        # MUDANÇA AQUI: O 'proxies' não está mais na linha do AsyncClient
+        async with httpx.AsyncClient() as client:
+            # MUDANÇA AQUI: O 'proxies' foi movido para dentro do client.get
+            resposta = await client.get(ip_check_url, timeout=10.0, proxies=proxies)
         
         if resposta.status_code == 200:
-            ip_visto = resposta.json().get("ip")
-            return {
-                "mensagem": "Sua requisição está saindo com o seguinte IP:",
-                "ip_de_saida": ip_visto
-            }
+            return {"ip_de_saida": resposta.json().get("ip")}
         else:
-            return {"erro": f"O serviço de verificação de IP respondeu com erro: status {resposta.status_code}"}
-
+            return {"erro": f"Serviço de IP respondeu com status {resposta.status_code}"}
     except Exception as e:
-        return {"erro": f"Falha ao tentar conectar através do proxy: {str(e)}"}
+        return {"erro": f"Falha ao conectar através do proxy: {str(e)}"}
         
