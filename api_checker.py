@@ -1,3 +1,5 @@
+# api_checker.py - VERSÃO FINAL E CORRIGIDA
+
 import os
 import httpx
 import random
@@ -16,8 +18,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
-    methods=["*"],
-    headers=["*"],
+    allow_methods=["*"],  # <-- AQUI ESTAVA O ERRO, AGORA CORRIGIDO
+    allow_headers=["*"],
 )
 
 # --- Carregamento Seguro das Chaves e do Proxy ---
@@ -32,7 +34,7 @@ def get_api_status():
     return {
         "status": "online",
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-        "version": "v8-final-revisado"
+        "version": "v9-final-corrigida"
     }
 
 @app.post("/verificar")
@@ -92,3 +94,4 @@ async def verificar_cartao(request: Request):
 
     except Exception as e:
         return JSONResponse(status_code=500, content={"status": "DIE", "codigo": "INTERNAL_SERVER_ERROR", "nome": "Erro Interno do Servidor", "mensagem": str(e)})
+
