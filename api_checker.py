@@ -1,4 +1,4 @@
-# api_checker.py - VERSÃO FINAL COM SINTAXE DE PROXY UNIVERSAL
+# api_checker.py - VERSÃO FINAL COM SINTAXE DE PROXY CORRIGIDA
 
 import os
 import httpx
@@ -23,17 +23,16 @@ app.add_middleware(
 ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")
 PROXY_URL = os.getenv("PROXY_URL", None)
 
-# --- NOVA LÓGICA DE PROXY ---
-# Preparamos o 'transport' do proxy aqui, de forma universal
-mounts = {}
-if PROXY_URL:
-    proxy = httpx.Proxy(url=PROXY_URL)
-    mounts = {"all://": proxy}
-# -----------------------------
+# --- LÓGICA DE PROXY CORRIGIDA ---
+# Preparamos o dicionário de proxies para ser usado nas requisições.
+# Esta é a forma mais compatível.
+proxies = {"http://": PROXY_URL, "https://": PROXY_URL} if PROXY_URL else None
+
+# ----------------------------------
 
 @app.get("/")
 def get_api_status():
-    return {"status": "online", "version": "v15-universal-proxy"}
+    return {"status": "online", "version": "v16-final-final"}
 
 async def estornar_pagamento(payment_id, headers):
     try:
@@ -66,9 +65,9 @@ async def verificar_cartao(request: Request):
         payload = {"transaction_amount": valor_aleatorio, "token": token, "payment_method_id": payment_method_id, "installments": 1, "payer": {"email": payer_email}}
         headers = {"Authorization": f"Bearer {ACCESS_TOKEN}", "Content-Type": "application/json", "X-Idempotency-Key": os.urandom(16).hex()}
 
-        # Usamos o 'mounts' que preparamos, em vez do argumento 'proxies'
-        async with httpx.AsyncClient(mounts=mounts) as client:
-            resposta = await client.post(url, json=payload, headers=headers, timeout=20.0)
+        # Usamos o dicionário de proxies diretamente na requisição
+        async with httpx.AsyncClient() as client:
+            resposta = await client.post(url, json=payload, headers=headers, timeout=20.0, proxies=proxies)
         
         resultado = resposta.json()
         status_code = resposta.status_code
@@ -97,9 +96,9 @@ async def testar_proxy():
     ip_check_url = "https://api.ipify.org?format=json"
     
     try:
-        # Usamos o 'mounts' aqui também
-        async with httpx.AsyncClient(mounts=mounts) as client:
-            resposta = await client.get(ip_check_url, timeout=10.0)
+        # Usamos o dicionário de proxies diretamente na requisição
+        async with httpx.AsyncClient() as client:
+            resposta = await client.get(ip_check_url, timeout=10.0, proxies=proxies)
         
         if resposta.status_code == 200:
             return {"ip_de_saida": resposta.json().get("ip")}
@@ -107,3 +106,4 @@ async def testar_proxy():
             return {"erro": f"Serviço de IP respondeu com status {resposta.status_code}"}
     except Exception as e:
         return {"erro": f"Falha ao conectar através do proxy: {str(e)}"}
+        
