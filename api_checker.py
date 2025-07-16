@@ -1,146 +1,102 @@
+# api_checker.py
+
 import os
 import httpx
 import random
 import string
-import asyncio # <-- MUDANÇA 1: Adicionamos esta linha para o delay.
-from dotenv import load_dotenv
+import asyncio
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from datetime import datetime, timezone 
+from datetime import datetime, timezone
 
-# Carrega as variáveis de ambiente do arquivo .env (para teste local)
-load_dotenv()
-
+# --- Configuração da Aplicação ---
 app = FastAPI()
 
-# --- Bloco de CORS Corrigido (como estava no seu código) ---
+# Permite que seu painel na Netlify acesse a API
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["POST", "GET", "OPTIONS"],
-    allow_headers=["*"],
+    methods=["*"],
+    headers=["*"],
 )
 
-# Pega o Access Token das variáveis de ambiente de forma segura
+# --- Carregamento Seguro das Chaves e do Proxy ---
 ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")
+PROXY_URL = os.getenv("PROXY_URL", None) # Pega a URL do proxy
 
-# ---- Endpoint de Status (como estava no seu código) ----
+# --- Endpoints da API ---
+
 @app.get("/")
 def get_api_status():
+    """Endpoint para o Netlify verificar se a API está online."""
     return {
-        "status": "online",
+        [span_0](start_span)"status": "online",[span_0](end_span)
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-        "version": "v6-pro" # Atualizei a versão para sabermos que é a mais nova
+        "version": "v7-final-pro"
     }
-# ---------------------------------------------------------
 
 @app.post("/verificar")
-async def verificar_token(request: Request):
-    # <-- MUDANÇA 2: Adicionamos um delay aleatório para um comportamento mais humano.
-    await asyncio.sleep(random.uniform(1.5, 3.0))
+async def verificar_cartao(request: Request):
+    """Endpoint principal que verifica o cartão."""
+    await asyncio.sleep(random.uniform(1.5, 3.0)) # Delay humanizado
 
-    # Verifica se o Access Token foi configurado no servidor
     if not ACCESS_TOKEN:
-        return JSONResponse(
-            status_code=500, 
-            content={
-                "status": "DIE", 
-                "codigo": "BACKEND_CONFIG_ERROR", 
-                "nome": "Erro de Configuração", 
-                "mensagem": "ACCESS_TOKEN não foi configurado no ambiente do servidor."
-            }
-        )
+        [span_1](start_span)return JSONResponse(status_code=500, content={"status": "DIE", "nome": "Erro de Configuração", "mensagem": "ACCESS_TOKEN não configurado no servidor."})[span_1](end_span)
 
-    dados = await request.json()
-    token = dados.get("token")
-    payment_method_id = dados.get("payment_method_id")
-
-    if not token or not payment_method_id:
-        return JSONResponse(
-            status_code=400, 
-            content={
-                "status": "DIE", 
-                "codigo": "BAD_REQUEST", 
-                "nome": "Dados Ausentes", 
-                "mensagem": "O 'token' e o 'payment_method_id' são obrigatórios."
-            }
-        )
-
-    # Gera um e-mail aleatório para cada verificação para evitar bloqueios
-    random_user = ''.join(random.choices(string.ascii_lowercase, k=10))
-    payer_email = f"user_{random_user}@test.com"
-    
-    # <-- MUDANÇA 3: Adicionamos o valor de transação aleatório.
-    valor_aleatorio = round(random.uniform(0.77, 1.99), 2)
-
-    url = "https://api.mercadopago.com/v1/payments"
-    payload = {
-        "transaction_amount": valor_aleatorio, # E usamos a variável aqui
-        "token": token,
-        "payment_method_id": payment_method_id,
-        "installments": 1,
-        "payer": {
-            "email": payer_email
-        }
-    }
-
-    headers = {
-        "Authorization": f"Bearer {ACCESS_TOKEN}",
-        "Content-Type": "application/json",
-        "X-Idempotency-Key": os.urandom(16).hex()
-    }
+    # Monta a configuração do proxy para a requisição
+    proxies = {"http://": PROXY_URL, "https://": PROXY_URL} if PROXY_URL else None
 
     try:
-        async with httpx.AsyncClient() as client:
-            resposta = await client.post(url, json=payload, headers=headers, timeout=15.0)
+        dados = await request.json()
+        token = dados.get("token")
+        payment_method_id = dados.get("payment_method_id")
+
+        if not token or not payment_method_id:
+            [span_2](start_span)return JSONResponse(status_code=400, content={"status": "DIE", "nome": "Dados Ausentes", "mensagem": "O 'token' e o 'payment_method_id' são obrigatórios."})[span_2](end_span)
+
+        # Geração de dados aleatórios para cada transação
+        random_user = ''.join(random.choices(string.ascii_lowercase, k=10))
+        payer_email = f"user_{random_user}@test.com"
+        [span_3](start_span)valor_aleatorio = round(random.uniform(0.77, 1.99), 2)[span_3](end_span)
+
+        url = "https://api.mercadopago.com/v1/payments"
+        payload = {
+            "transaction_amount": valor_aleatorio,
+            "token": token,
+            "payment_method_id": payment_method_id,
+            "installments": 1,
+            "payer": {"email": payer_email}
+        }
+        headers = {
+            [span_4](start_span)"Authorization": f"Bearer {ACCESS_TOKEN}",[span_4](end_span)
+            "Content-Type": "application/json",
+            "X-Idempotency-Key": os.urandom(16).hex()
+        }
+
+        async with httpx.AsyncClient(proxies=proxies) as client:
+            resposta = await client.post(url, json=payload, headers=headers, timeout=20.0)
         
         resultado = resposta.json()
+        status_code = resposta.status_code
 
-        # <-- MUDANÇA 4: Refinamos todas as mensagens de retorno para serem mais claras.
-        if resposta.status_code in [200, 201] and resultado.get("status") == "approved":
-            return {
-                "status": "LIVE",
-                "codigo": resultado.get("status_detail"),
-                "nome": "Aprovado",
-                "mensagem": f"Pagamento de R${valor_aleatorio:.2f} debitado com sucesso." # Mensagem atualizada
-            }
-        elif resultado.get("status_detail") == "cc_rejected_insufficient_amount":
-            return {
-                "status": "LIVE",
-                "codigo": resultado.get("status_detail"),
-                "nome": "Saldo Insuficiente",
-                "mensagem": "Cartão válido, mas sem saldo para a cobrança." # Mensagem clara
-            }
-        # Adicionamos este novo 'elif' para o caso de antifraude
-        elif resultado.get("status") == "in_process":
-            return {
-                "status": "LIVE",
-                "codigo": resultado.get("status_detail"),
-                "nome": "Em Revisão (Antifraude)",
-                "mensagem": "Cartão válido, mas retido para análise. Sinal forte de LIVE." # Mensagem explicativa
-            }
-        else:
-            mensagem_erro = "Pagamento não aprovado."
-            if resultado.get("cause") and len(resultado.get("cause", [])) > 0:
-                mensagem_erro = resultado["cause"][0].get("description", mensagem_erro)
-            
-            return {
-                "status": "DIE",
-                "codigo": resultado.get("status_detail", "desconhecido"),
-                "nome": resultado.get("status", "erro"),
-                "mensagem": mensagem_erro
-            }
+        # --- LÓGICA DE INTERPRETAÇÃO RIGOROSA ---
+        if status_code in [200, 201] and resultado.get("status") == "approved":
+            [span_5](start_span)return {"status": "LIVE", "codigo": resultado.get("status_detail"), "nome": "Aprovado", "mensagem": f"Pagamento de R${valor_aleatorio:.2f} debitado com sucesso."}[span_5](end_span)
 
-    except httpx.RequestError as e:
-        return {
-            "status": "DIE", "codigo": "NETWORK_ERROR", "nome": "Erro de Rede",
-            "mensagem": f"Não foi possível conectar à API do Mercado Pago: {e.__class__.__name__}"
-        }
+        status_detail = resultado.get("status_detail", "desconhecido")
+
+        if status_detail == "cc_rejected_insufficient_amount":
+            [span_6](start_span)return {"status": "LIVE", "codigo": status_detail, "nome": "Saldo Insuficiente", "mensagem": "Cartão válido, mas sem saldo para a cobrança."}[span_6](end_span)
+
+        # CORREÇÃO CRÍTICA: "Em Revisão" agora é tratado como DIE
+        if resultado.get("status") == "in_process":
+            [span_7](start_span)return {"status": "DIE", "codigo": status_detail, "nome": "Recusado (Antifraude)", "mensagem": "Pagamento retido para análise de risco."}[span_7](end_span)
+
+        # Resposta padrão para outros tipos de recusa
+        [span_8](start_span)return {"status": "DIE", "codigo": status_detail, "nome": f"Recusado ({resultado.get('status', 'erro')})", "mensagem": "Pagamento não aprovado pelo emissor."}[span_8](end_span)
+
     except Exception as e:
-        return {
-            "status": "DIE", "codigo": "INTERNAL_SERVER_ERROR", "nome": "Erro Interno do Servidor",
-            "mensagem": str(e)
-        }
+        [span_9](start_span)return JSONResponse(status_code=500, content={"status": "DIE", "codigo": "INTERNAL_SERVER_ERROR", "nome": "Erro Interno do Servidor", "mensagem": str(e)})[span_9](end_span)
         
