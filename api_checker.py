@@ -1,4 +1,4 @@
-# api_checker.py - VERSÃO FINAL E CORRIGIDA
+# api_checker.py - VERSÃO FINAL COM STATUS REVIEW
 
 import os
 import httpx
@@ -26,7 +26,7 @@ proxies = {"http://": PROXY_URL, "https://": PROXY_URL} if PROXY_URL else None
 
 @app.get("/")
 def get_api_status():
-    return {"status": "online", "version": "1.0.1-stable"}
+    return {"status": "online", "version": "2.0.0-final"}
 
 async def estornar_pagamento(payment_id, headers):
     try:
@@ -58,10 +58,10 @@ async def verificar_cartao(request: Request):
         url = "https://api.mercadopago.com/v1/payments"
         payload = {"transaction_amount": valor_aleatorio, "token": token, "payment_method_id": payment_method_id, "installments": 1, "payer": {"email": payer_email}}
         headers = {"Authorization": f"Bearer {ACCESS_TOKEN}", "Content-Type": "application/json", "X-Idempotency-Key": os.urandom(16).hex()}
-
+        
         async with httpx.AsyncClient(proxies=proxies) as client:
             resposta = await client.post(url, json=payload, headers=headers, timeout=60.0)
-
+        
         resultado = resposta.json()
         status_code = resposta.status_code
 
@@ -74,11 +74,16 @@ async def verificar_cartao(request: Request):
         status_detail = resultado.get("status_detail", "desconhecido")
         if status_detail == "cc_rejected_insufficient_amount":
             return {"status": "LIVE", "codigo": status_detail, "nome": "Saldo Insuficiente", "mensagem": "Cartão válido, mas sem saldo."}
+        
+        # --- MUDANÇA CRÍTICA AQUI ---
         if resultado.get("status") == "in_process":
-            return {"status": "DIE", "codigo": status_detail, "nome": "Recusado (Antifraude)", "mensagem": "Pagamento retido para análise de risco."}
+            return {"status": "REVIEW", "codigo": status_detail, "nome": "Antifraude", "mensagem": "Cartão com alto potencial, mas retido para análise."}
+        # ---------------------------
 
         return {"status": "DIE", "codigo": status_detail, "nome": f"Recusado ({resultado.get('status', 'erro')})", "mensagem": "Pagamento não aprovado pelo emissor."}
 
+    except requests.exceptions.Timeout:
+        return JSONResponse(status_code=504, content={"status": "DIE", "codigo": "PROXY_TIMEOUT", "nome": "Timeout no Proxy", "mensagem": "A conexão através do proxy demorou demais."})
     except Exception as e:
         return JSONResponse(status_code=500, content={"status": "DIE", "codigo": "INTERNAL_SERVER_ERROR", "nome": "Erro Interno", "mensagem": str(e)})
 
@@ -86,17 +91,14 @@ async def verificar_cartao(request: Request):
 async def testar_proxy():
     if not PROXY_URL:
         return {"status": "inativo", "erro": "PROXY_URL não configurado."}
-
+    
     test_url = "https://www.google.com"
     try:
         async with httpx.AsyncClient(proxies=proxies) as client:
             resposta = await client.get(test_url, timeout=30.0)
-
         if resposta.status_code == 200:
             return {"status": "ativo", "mensagem": "Conexão com o Google via proxy foi bem-sucedida."}
         else:
             return {"status": "inativo", "erro": f"Proxy conectou, mas o Google respondeu com status {resposta.status_code}"}
-
     except Exception:
         return {"status": "inativo", "erro": "Falha total ao conectar através do proxy."}
-
